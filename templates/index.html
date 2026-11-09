@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Teman - AI Coding Agent</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 20px; display: flex; flex-direction: column; height: 90vh; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .controls { display: flex; gap: 10px; }
+        select, .btn-clear { padding: 8px; border-radius: 6px; background: #1e293b; color: white; border: 1px solid #475569; outline: none; font-weight: bold; cursor: pointer;}
+        .btn-clear { background: #ef4444; border: none; }
+        #chat-box { flex: 1; overflow-y: auto; border: 1px solid #334155; border-radius: 8px; padding: 20px; background: #1e293b; margin-bottom: 20px; }
+        .message { margin-bottom: 15px; padding: 10px 15px; border-radius: 8px; max-width: 85%; line-height: 1.5; }
+        .user-msg { background: #3b82f6; color: white; align-self: flex-end; margin-left: auto; }
+        .bot-msg { background: #334155; color: #f8fafc; }
+        .bot-msg pre { background: #0f172a; padding: 10px; border-radius: 5px; overflow-x: auto; position: relative;}
+        
+        /* Style untuk Tombol Jalankan */
+        .run-btn { background: #10b981; color: white; border: none; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; margin-top: 5px; font-weight: bold;}
+        .run-btn:hover { background: #059669; }
+        .output-box { background: #000; color: #10b981; padding: 10px; border-radius: 5px; font-family: monospace; margin-top: 10px; white-space: pre-wrap; border-left: 4px solid #10b981;}
+
+        .input-area { display: flex; gap: 10px; }
+        input[type="text"] { flex: 1; padding: 12px; border-radius: 6px; border: 1px solid #475569; background: #0f172a; color: white; outline: none; }
+        .btn-send { padding: 12px 24px; background: #3b82f6; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: bold; }
+        .btn-send:hover { background: #2563eb; }
+        button:disabled { background: #64748b; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h2>🦅 Teman AI Coding Agent</h2>
+        <div class="controls">
+            <select id="ai-model">
+                <option value="groq">Groq (Llama 3) - Cepat</option>
+                <option value="gemini">Google Gemini 2.5</option>
+            </select>
+            <button class="btn-clear" onclick="clearChat()">Hapus Chat</button>
+        </div>
+    </div>
+    
+    <div id="chat-box"></div>
+    
+    <div class="input-area">
+        <input type="text" id="user-input" placeholder="Ketik perintah codinganmu..." onkeypress="handleEnter(event)">
+        <button class="btn-send" id="send-btn" onclick="sendMessage()">Kirim</button>
+    </div>
+
+    <script>
+        const chatBox = document.getElementById('chat-box');
+        const userInput = document.getElementById('user-input');
+        const sendBtn = document.getElementById('send-btn');
+        const aiModel = document.getElementById('ai-model');
+
+        // FUNGSI LOAD MEMORI SAAT REFRESH
+        window.onload = async () => {
+            try {
+                const res = await fetch('/api/history');
+                const data = await res.json();
+                if (data.history.length === 0) {
+                    chatBox.innerHTML = `<div class="message bot-msg">Halo Teman! Aku siap bantu kamu ngoding. Memori kita sudah tersambung lho. Mau bikin apa hari ini?</div>`;
+                } else {
+                    data.history.forEach(msg => {
+                        appendMessage(msg.content, msg.role === 'user' ? 'user-msg' : 'bot-msg', msg.role !== 'user');
+                    });
+                }
+            } catch (e) {
+                console.log("Gagal load memori");
+            }
+        };
+
+        async function clearChat() {
+            await fetch('/api/clear', { method: 'POST' });
+            chatBox.innerHTML = `<div class="message bot-msg">Memori dibersihkan. Mari mulai sesi baru!</div>`;
+        }
+
+        aiModel.addEventListener('change', () => {
+            const selectedModelName = aiModel.options[aiModel.selectedIndex].text;
+            chatBox.innerHTML = `<div class="message bot-msg">Beralih ke mode <b>${selectedModelName}</b>. Memori sebelumnya masih diingat lho!</div>`;
+        });
+
+        function handleEnter(e) { if (e.key === 'Enter') sendMessage(); }
+
+        async function sendMessage() {
+            const message = userInput.value.trim();
+            if (!message) return;
+
+            appendMessage(message, 'user-msg');
+            userInput.value = '';
+            sendBtn.disabled = true;
+
+            const loadingId = 'loading-' + Date.now();
+            chatBox.innerHTML += `<div id="${loadingId}" class="message bot-msg">Teman sedang berpikir... ⏳</div>`;
+            chatBox.scrollTop = chatBox.scrollHeight;
+
+            try {
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: message, model_choice: aiModel.value })
+                });
+                
+                const data = await response.json();
+                document.getElementById(loadingId).remove(); 
+
+                if (data.error) {
+                    appendMessage("Error: " + data.error, 'bot-msg');
+                } else {
+                    appendMessage(data.reply, 'bot-msg', true);
+                }
+            } catch (err) {
+                document.getElementById(loadingId).remove();
+                appendMessage("Gagal terhubung ke server.", 'bot-msg');
+            } finally {
+                sendBtn.disabled = false;
+            }
+        }
+
+        function appendMessage(text, className, isMarkdown = false) {
+            const div = document.createElement('div');
+            div.className = `message ${className}`;
+            
+            if (isMarkdown) {
+                div.innerHTML = marked.parse(text);
+                div.querySelectorAll('pre code').forEach((block) => {
+                    hljs.highlightElement(block);
+                    
+                    // MENAMBAHKAN TOMBOL JALANKAN OTOMATIS
+                    const pre = block.parentElement;
+                    const btn = document.createElement('button');
+                    btn.className = 'run-btn';
+                    btn.innerText = '▶ Jalankan Kode Ini';
+                    
+                    btn.onclick = () => runCodeFromBlock(block.innerText, div);
+                    pre.appendChild(btn);
+                });
+            } else {
+                div.textContent = text;
+            }
+            chatBox.appendChild(div);
+            chatBox.scrollTop = chatBox.scrollHeight;
+        }
+
+        async function runCodeFromBlock(codeText, messageDiv) {
+            // Simpan sementara kode ke file via API (kita gunakan endpoint run)
+            // Karena file aslinya mungkin tidak disimpan kalau user tidak minta [SAVE_FILE]
+            // Kita simpan dulu dengan nama temp
+            const tempFilename = 'temp_run.py';
+            
+            // Panggil endpoint save (kita akali lewat fetch biasa)
+            // Untuk simplifikasi, kita buat endpoint /api/save-temp di backend (nanti kita tambahkan)
+            // Atau langsung kirim ke /api/run jika kita modifikasi sedikit backendnya.
+            
+            // SOLUSI CEPAT: Kita modifikasi endpoint /api/run agar menerima raw code, 
+            // TAPI karena kita sudah terlanjur nulis backendnya pakai filename, 
+            // Kita simpan dulu raw code ke local storage browser atau kirim ke backend untuk di save.
+            
+            // Mari kita asumsikan kode di dalam blok adalah kode yang valid dan sudah disave AI dengan format [SAVE_FILE].
+            // Kita cari nama file dari teks pesan sebelumnya.
+            // (Ini agak rumit di frontend, jadi mari kita sederhanakan: Jalankan raw code via endpoint baru)
+            
+            const outputDiv = document.createElement('div');
+            outputDiv.className = 'output-box';
+            outputDiv.innerText = "Menjalankan kode... ⏳";
+            messageDiv.appendChild(outputDiv);
+
+            try {
+                const response = await fetch('/api/run_raw', { // Kita harus tambah endpoint ini di backend (lihat catatan di bawah)
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ code: codeText })
+                });
+                const data = await response.json();
+                
+                if (data.error) {
+                    outputDiv.style.color = '#ef4444'; // Merah kalau error
+                    outputDiv.innerText = "Error:\n" + data.error;
+                } else {
+                    outputDiv.style.color = '#10b981'; // Hijau kalau sukses
+                    outputDiv.innerText = "Output:\n" + data.output;
+                }
+            } catch (err) {
+                outputDiv.style.color = '#ef4444';
+                outputDiv.innerText = "Gagal mengeksekusi kode.";
+            }
+        }
+    </script>
+</body>
+</html>

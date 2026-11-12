@@ -4,4 +4,7 @@ jinja2
 python-dotenv
 groq
 google-generativeai
-
+openai
+pillow
+python-multipart
+pypdf

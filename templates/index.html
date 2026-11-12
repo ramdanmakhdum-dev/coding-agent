@@ -4,9 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Teman AI Ultimate</title>
-    <!-- Icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- Markdown & Highlight -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -14,35 +12,26 @@
     <style>
         :root { --bg: #0f172a; --panel: #1e293b; --text: #e2e8f0; --accent: #3b82f6; --border: #334155; }
         * { box-sizing: border-box; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
         
-        /* HEADER */
         .header { display: flex; justify-content: space-between; align-items: center; padding: 15px 20px; background: #0b1120; border-bottom: 1px solid var(--border); }
-        .header h2 { margin: 0; font-size: 18px; font-weight: 700; display: flex; align-items: center; gap: 10px;}
+        .header h2 { margin: 0; font-size: 18px; font-weight: 700; }
         .header-controls { display: flex; gap: 10px; }
         select, .btn-clear { padding: 8px 12px; border-radius: 8px; background: var(--panel); color: white; border: 1px solid var(--border); font-size: 13px; font-weight: 600; outline: none; cursor: pointer; }
-        .btn-clear { background: #ef4444; border: none; color: white;}
-        .btn-clear:hover { background: #dc2626; }
-
-        /* CHAT AREA */
+        .btn-clear { background: #ef4444; border: none; }
+        
         #chat-box { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 20px; scroll-behavior: smooth;}
-        .message { max-width: 85%; padding: 12px 18px; border-radius: 16px; line-height: 1.6; word-wrap: break-word; position: relative; font-size: 15px;}
+        .message { max-width: 85%; padding: 12px 18px; border-radius: 16px; line-height: 1.6; word-wrap: break-word; font-size: 15px;}
         .user-msg { background: var(--accent); color: white; align-self: flex-end; border-bottom-right-radius: 4px; }
         .bot-msg { background: var(--panel); color: #f8fafc; align-self: flex-start; border-bottom-left-radius: 4px; border: 1px solid var(--border);}
         
-        /* CODE BLOCK & TOMBOL */
         .bot-msg pre { background: #0b1120; padding: 15px; border-radius: 10px; overflow-x: auto; position: relative; border: 1px solid var(--border); margin-top: 10px;}
         .copy-btn { position: absolute; top: 8px; right: 8px; background: #475569; color: white; border: none; padding: 4px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; opacity: 0.7; transition: 0.2s;}
         .copy-btn:hover { opacity: 1; background: var(--accent); }
-        .run-btn { background: #10b981; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-size: 13px; margin-top: 10px; font-weight: bold; display: inline-flex; align-items: center; gap: 5px;}
-        .run-btn:hover { background: #059669; }
-        .output-box { background: #000; color: #10b981; padding: 12px; border-radius: 8px; font-family: monospace; margin-top: 10px; white-space: pre-wrap; border-left: 4px solid #10b981; font-size: 13px;}
         
         .chat-image { max-width: 100%; max-height: 250px; border-radius: 10px; margin-top: 10px; display: block; border: 1px solid var(--border);}
 
-        /* INPUT AREA (BOTTOM) */
         .input-wrapper { padding: 15px 20px; background: #0b1120; border-top: 1px solid var(--border); }
-        
         .file-preview { font-size: 12px; color: #94a3b8; margin-bottom: 10px; display: none; align-items: center; gap: 10px; background: var(--panel); padding: 5px 10px; border-radius: 6px; width: fit-content;}
         
         .input-box { display: flex; align-items: center; background: var(--panel); border: 1px solid var(--border); border-radius: 25px; padding: 5px 10px; gap: 10px;}
@@ -55,7 +44,6 @@
         .btn-send:hover { background: #2563eb; transform: scale(1.05); }
         .btn-send:disabled { background: #475569; cursor: not-allowed; transform: none;}
 
-        /* MIC LISTENING STATE */
         .mic-listening { color: #ef4444 !important; animation: pulse 1s infinite alternate; }
         @keyframes pulse { 0% { transform: scale(1); } 100% { transform: scale(1.2); } }
     </style>
@@ -104,22 +92,16 @@
         let selectedImage = null;
         let selectedDoc = null;
         
-        // UI State
         if(localStorage.getItem('teman_model')) aiModel.value = localStorage.getItem('teman_model');
 
-        // --- LOGIKA BARU: AUTO CLEAR SAAT GANTI MODE ---
         aiModel.addEventListener('change', async () => {
             localStorage.setItem('teman_model', aiModel.value);
-            
-            // Bersihkan chat otomatis jika pindah mode (Image/Video)
-            // Biarkan chat tetap ada jika tetap di Omni AI
             if (aiModel.value === 'image_gen' || aiModel.value === 'video_script') {
                 await fetch('/api/clear', { method: 'POST' });
                 chatBox.innerHTML = '';
                 const modeText = aiModel.options[aiModel.selectedIndex].text;
-                appendMessage(`Beralih ke mode <b>${modeText}</b>. Chat sebelumnya telah dibersihkan. Silakan masukkan prompt.`, 'bot-msg', true);
+                appendMessage(`Beralih ke mode <b>${modeText}</b>. Silakan masukkan prompt.`, 'bot-msg', true);
             } else {
-                // Jika balik ke Omni AI, kita bersihkan juga agar tidak tercampur prompt gambar
                 await fetch('/api/clear', { method: 'POST' });
                 chatBox.innerHTML = '';
                 appendMessage(`Beralih ke mode <b>Omni AI</b>. Silakan mulai percakapan baru.`, 'bot-msg', true);
@@ -146,14 +128,14 @@
             try {
                 const res = await fetch('/api/history');
                 const data = await res.json();
-                if (data.history.length === 0) appendMessage("Halo! Aku siap bantu. Kamu bisa kirim teks, gambar, dokumen, atau klik ikon mikrofon untuk bicara (Gunakan Chrome/localhost).", 'bot-msg');
+                if (data.history.length === 0) appendMessage("Halo! Aku siap bantu. Kirim teks, gambar, dokumen, atau klik mikrofon (Gunakan Chrome/localhost).", 'bot-msg');
                 else data.history.forEach(msg => appendMessage(msg.content, msg.role === 'user' ? 'user-msg' : 'bot-msg', msg.role !== 'user'));
             } catch (e) { console.log("Gagal load"); }
         };
 
         async function clearChat() {
             await fetch('/api/clear', { method: 'POST' });
-            chatBox.innerHTML = ''; appendMessage("Memori dibersihkan. Mari mulai sesi baru.", 'bot-msg');
+            chatBox.innerHTML = ''; appendMessage("Memori dibersihkan.", 'bot-msg');
             selectedImage = null; clearDoc();
         }
 
@@ -188,7 +170,7 @@
                 if (data.error) appendMessage("Error: " + data.error, 'bot-msg');
                 else {
                     appendMessage(data.reply, 'bot-msg', true);
-                    speakText(data.reply); // Baca jawaban AI
+                    speakText(data.reply);
                 }
             } catch (err) {
                 document.getElementById(loadingId).remove();
@@ -206,6 +188,7 @@
                     hljs.highlightElement(block);
                     const pre = block.parentElement;
                     
+                    // HANYA TOMBOL COPY (TOMBOL RUN SUDAH DIHAPUS)
                     const copyBtn = document.createElement('button');
                     copyBtn.className = 'copy-btn'; copyBtn.innerHTML = '<i class="fa-regular fa-copy"></i> Copy';
                     copyBtn.onclick = () => {
@@ -213,13 +196,6 @@
                         copyBtn.innerHTML = '<i class="fa-solid fa-check"></i> Copied!'; setTimeout(() => copyBtn.innerHTML = '<i class="fa-regular fa-copy"></i> Copy', 2000);
                     };
                     pre.appendChild(copyBtn);
-
-                    if (block.className.includes('language-python')) {
-                        const runBtn = document.createElement('button');
-                        runBtn.className = 'run-btn'; runBtn.innerHTML = '<i class="fa-solid fa-play"></i> Jalankan Kode';
-                        runBtn.onclick = () => runCode(block.innerText, div);
-                        pre.appendChild(runBtn);
-                    }
                 });
             } else {
                 div.textContent = text;
@@ -233,18 +209,7 @@
             chatBox.scrollTop = chatBox.scrollHeight;
         }
 
-        async function runCode(codeText, messageDiv) {
-            const out = document.createElement('div'); out.className = 'output-box'; out.innerText = "Menjalankan kode...";
-            messageDiv.appendChild(out);
-            try {
-                const res = await fetch('/api/run_raw', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({code: codeText}) });
-                const data = await res.json();
-                out.innerText = data.error ? "Error:\n" + data.error : "Output:\n" + data.output;
-                if(data.error) out.style.color = '#ef4444';
-            } catch { out.innerText = "Gagal eksekusi."; }
-        }
-
-        // --- FITUR SUARA (WEB SPEECH API) ---
+        // --- FITUR SUARA ---
         let isListening = false;
         const micBtn = document.getElementById('mic-btn');
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -262,13 +227,13 @@
                 sendMessage();
             };
             recognition.onerror = (event) => {
-                alert("Mikrofon gagal diakses: " + event.error + "\n\nCatatan: Firefox/Chrome hanya mengizinkan mikrofon pada koneksi HTTPS atau '127.0.0.1' (localhost). Jika kamu mengakses lewat IP jaringan (192.168.x.x), fitur ini akan diblokir.");
+                alert("Mikrofon gagal diakses: " + event.error + "\n\nCatatan: Gunakan Chrome atau pastikan di HTTPS/localhost.");
                 isListening = false; micBtn.classList.remove('mic-listening');
             };
         }
 
         function toggleVoice() {
-            if (!recognition) return alert("Browser kamu tidak mendukung fitur suara. Gunakan Google Chrome.");
+            if (!recognition) return alert("Browser tidak mendukung fitur suara. Gunakan Google Chrome.");
             if (isListening) recognition.stop();
             else recognition.start();
         }
@@ -276,7 +241,7 @@
         function speakText(text) {
             if (!window.speechSynthesis) return;
             window.speechSynthesis.cancel(); 
-            const cleanText = text.replace(/```[\s\S]*?```/g, ' (Kode program telah ditampilkan di layar) ').replace(/[*#_]/g, '');
+            const cleanText = text.replace(/```[\s\S]*?```/g, ' (Kode program ditampilkan di layar) ').replace(/[*#_]/g, '');
             const utterance = new SpeechSynthesisUtterance(cleanText);
             utterance.lang = 'id-ID';
             utterance.rate = 1.0;

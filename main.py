@@ -1,8 +1,6 @@
 import os
 import re
 import json
-import subprocess
-import sys
 import io
 import base64
 import urllib.parse
@@ -23,27 +21,20 @@ from openai import OpenAI
 load_dotenv()
 
 # --- INISIALISASI AMAN (ANTI-CRASH DI RENDER) ---
-# Gemini
 gemini_key = os.getenv("GEMINI_API_KEY")
 if gemini_key:
     genai.configure(api_key=gemini_key)
-else:
-    print("⚠️ Peringatan: GEMINI_API_KEY tidak ditemukan.")
 
-# Groq
 groq_key = os.getenv("GROQ_API_KEY")
 groq_client = Groq(api_key=groq_key) if groq_key else None
-if not groq_client: print("⚠️ Peringatan: GROQ_API_KEY tidak ditemukan.")
 
-# Fungsi pembuat client OpenAI-compatible yang aman
 def get_safe_openai_client(env_var_name, base_url):
     api_key = os.getenv(env_var_name)
     if not api_key:
-        print(f"⚠️ Peringatan: {env_var_name} tidak ditemukan. Model terkait dinonaktifkan.")
+        print(f"⚠️ Peringatan: {env_var_name} tidak ditemukan.")
         return None
     return OpenAI(api_key=api_key, base_url=base_url)
 
-# Inisialisasi semua client
 nvidia_client = get_safe_openai_client("NVIDIA_API_KEY", "https://integrate.api.nvidia.com/v1")
 openrouter_client = get_safe_openai_client("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1")
 hf_client = get_safe_openai_client("HF_TOKEN", "https://router.huggingface.co/v1")
@@ -64,9 +55,6 @@ def load_history():
 def save_history(history):
     with open(HISTORY_FILE, "w") as f: json.dump(history, f)
 
-class RawCodeRequest(BaseModel):
-    code: str
-
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
     return templates.TemplateResponse(request=request, name="index.html")
@@ -78,22 +66,6 @@ async def get_history(): return {"history": load_history()}
 async def clear_history():
     save_history([])
     return {"status": "cleared"}
-
-@app.post("/api/run_raw")
-async def run_raw_code(request: RawCodeRequest):
-    temp_file = os.path.join(SAVE_DIR, "temp_execution.py")
-    try:
-        with open(temp_file, "w") as f: f.write(request.code)
-        result = subprocess.run([sys.executable, temp_file], capture_output=True, text=True, timeout=5)
-        output = result.stdout + ("\n" + result.stderr if result.stderr else "")
-        if os.path.exists(temp_file): os.remove(temp_file)
-        return {"output": output.strip() or "(Kode berjalan sukses, tanpa output.)"}
-    except subprocess.TimeoutExpired:
-        if os.path.exists(temp_file): os.remove(temp_file)
-        return {"error": "Waktu habis (lebih dari 5 detik)."}
-    except Exception as e:
-        if os.path.exists(temp_file): os.remove(temp_file)
-        return {"error": str(e)}
 
 def process_ai_response(text):
     pattern = r"\[SAVE_FILE:\s*(.*?)\]\s*```(?:\w+)?\n(.*?)```"
@@ -133,18 +105,16 @@ async def chat_with_agent(
         JANGAN gunakan fungsi input(). Gunakan variabel statis atau argparse.
         
         [ATURAN PENTING - JANGAN BANYAK TANYA]:
-        Jika user meminta script/kode, LANGSUNG BUATKAN KODENYA. Jangan balik bertanya. Buat asumsi wajar dan berikan kode yang berfungsi.
+        Jika user meminta script/kode, LANGSUNG BUATKAN KODENYA. Jangan balik bertanya.
         """
 
         history = load_history()
         
-        # LOGIKA BACA DOKUMEN (RAG LITE)
         doc_context = ""
         if document:
             if document.filename.endswith('.pdf'):
                 pdf_reader = PdfReader(io.BytesIO(await document.read()))
-                for page in pdf_reader.pages:
-                    doc_context += page.extract_text() + "\n"
+                for page in pdf_reader.pages: doc_context += page.extract_text() + "\n"
             else:
                 doc_context = (await document.read()).decode("utf-8", errors="ignore")
             doc_context = f"\n\n[KONTEKS DOKUMEN]:\n{doc_context[:5000]}" 
@@ -155,7 +125,7 @@ async def chat_with_agent(
         if len(history) > 10: history = history[-10:]
         response_text = ""
 
-        # 1. MODE VISION (GAMBAR)
+        # MODE VISION (GAMBAR)
         if image:
             image_bytes = await image.read()
             try:
@@ -175,12 +145,12 @@ async def chat_with_agent(
                     response_text = f"🖼️ **Qwen Vision (Fallback)**\n\n{fallback.choices[0].message.content}"
                 except Exception as e: response_text = f"Error Gambar: {str(e)}"
 
-        # 2. MODE BIKIN GAMBAR
+        # MODE BIKIN GAMBAR
         elif model_choice == "image_gen":
             try:
-                if not groq_client: raise Exception("Groq API Key tidak ada untuk membuat prompt gambar.")
+                if not groq_client: raise Exception("Groq API Key tidak ada.")
                 enhancer = groq_client.chat.completions.create(
-                    messages=[{"role": "system", "content": "You are an expert prompt engineer. Translate to English prompt."}, {"role": "user", "content": message}],
+                    messages=[{"role": "system", "content": "You are an expert prompt engineer."}, {"role": "user", "content": message}],
                     model="openai/gpt-oss-120b", temperature=0.7,
                 )
                 english_prompt = urllib.parse.quote(enhancer.choices[0].message.content)
@@ -188,18 +158,18 @@ async def chat_with_agent(
                 response_text = f"🎨 **Gambar Dibuat!**\n\n![Gambar]({image_url})"
             except Exception as e: response_text = f"Error: {str(e)}"
 
-        # 3. MODE SCRIPT VIDEO
+        # MODE SCRIPT VIDEO
         elif model_choice == "video_script":
             try:
                 if not groq_client: raise Exception("Groq API Key tidak ada.")
                 completion = groq_client.chat.completions.create(
-                    messages=[{"role": "system", "content": "Kamu Sutradara Film AI. Buat storyboard 10-15 detik."}, {"role": "user", "content": message}],
+                    messages=[{"role": "system", "content": "Kamu Sutradara Film AI."}, {"role": "user", "content": message}],
                     model="openai/gpt-oss-120b", temperature=0.7,
                 )
                 response_text = f"🎬 **Script Video**\n\n{completion.choices[0].message.content}"
             except Exception as e: response_text = f"Error: {str(e)}"
 
-        # 4. MODE OMNI AI (MUSYAWARAH MODEL)
+        # MODE OMNI AI
         elif model_choice == "omni_ai":
             responses = {}
             
@@ -271,7 +241,7 @@ async def chat_with_agent(
 
             valid_answers = {k: v for k, v in responses.items() if v}
             if not valid_answers:
-                response_text = "Waduh, semua AI sedang limit atau API Key belum dimasukkan. Coba cek Environment Variables di Render."
+                response_text = "Waduh, semua AI sedang limit atau API Key belum dimasukkan."
             else:
                 synth_prompt = f"Rangkum jawaban coding terbaik dari AI berikut:\n\n"
                 for name, ans in valid_answers.items(): synth_prompt += f"--- {name} ---\n{ans}\n\n"

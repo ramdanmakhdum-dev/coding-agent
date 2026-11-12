@@ -19,16 +19,39 @@ import google.generativeai as genai
 from groq import Groq
 from openai import OpenAI 
 
+# 1. Load API Keys
 load_dotenv()
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
-nvidia_client = OpenAI(api_key=os.getenv("NVIDIA_API_KEY"), base_url="https://integrate.api.nvidia.com/v1")
-openrouter_client = OpenAI(api_key=os.getenv("OPENROUTER_API_KEY"), base_url="https://openrouter.ai/api/v1")
-hf_client = OpenAI(api_key=os.getenv("HF_TOKEN"), base_url="https://router.huggingface.co/v1")
+# --- INISIALISASI AMAN (ANTI-CRASH DI RENDER) ---
+# Gemini
+gemini_key = os.getenv("GEMINI_API_KEY")
+if gemini_key:
+    genai.configure(api_key=gemini_key)
+else:
+    print("⚠️ Peringatan: GEMINI_API_KEY tidak ditemukan.")
+
+# Groq
+groq_key = os.getenv("GROQ_API_KEY")
+groq_client = Groq(api_key=groq_key) if groq_key else None
+if not groq_client: print("⚠️ Peringatan: GROQ_API_KEY tidak ditemukan.")
+
+# Fungsi pembuat client OpenAI-compatible yang aman
+def get_safe_openai_client(env_var_name, base_url):
+    api_key = os.getenv(env_var_name)
+    if not api_key:
+        print(f"⚠️ Peringatan: {env_var_name} tidak ditemukan. Model terkait dinonaktifkan.")
+        return None
+    return OpenAI(api_key=api_key, base_url=base_url)
+
+# Inisialisasi semua client
+nvidia_client = get_safe_openai_client("NVIDIA_API_KEY", "https://integrate.api.nvidia.com/v1")
+openrouter_client = get_safe_openai_client("OPENROUTER_API_KEY", "https://openrouter.ai/api/v1")
+hf_client = get_safe_openai_client("HF_TOKEN", "https://router.huggingface.co/v1")
+scaleway_client = get_safe_openai_client("SCALEWAY_API_KEY", "https://api.scaleway.ai/v1")
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+
 SAVE_DIR = "generated_code"
 HISTORY_FILE = "chat_history.json"
 os.makedirs(SAVE_DIR, exist_ok=True)
@@ -93,17 +116,29 @@ async def chat_with_agent(
     message: str = Form(...), 
     model_choice: str = Form(...), 
     image: UploadFile = File(None),
-    document: UploadFile = File(None) # Fitur Dokumen (RAG)
+    document: UploadFile = File(None)
 ):
     try:
         system_prompt = """Kamu adalah "Teman", AI Agent expert software engineering. 
         Gunakan bahasa Indonesia santai tapi profesional.
-        Jika user meminta membuat file, balas: [SAVE_FILE: nama_file.py] lalu ```python ... ```
-        JANGAN gunakan input() pada kode yang dibuat."""
+        
+        [ATURAN MEMBUAT FILE]:
+        Jika user meminta membuat file, balas dengan format:
+        [SAVE_FILE: nama_file.py]
+        ```python
+        # kode di sini
+        ```
+        
+        [ATURAN KODE INTERAKTIF]:
+        JANGAN gunakan fungsi input(). Gunakan variabel statis atau argparse.
+        
+        [ATURAN PENTING - JANGAN BANYAK TANYA]:
+        Jika user meminta script/kode, LANGSUNG BUATKAN KODENYA. Jangan balik bertanya. Buat asumsi wajar dan berikan kode yang berfungsi.
+        """
 
         history = load_history()
         
-        # --- LOGIKA BACA DOKUMEN (RAG LITE) ---
+        # LOGIKA BACA DOKUMEN (RAG LITE)
         doc_context = ""
         if document:
             if document.filename.endswith('.pdf'):
@@ -112,8 +147,7 @@ async def chat_with_agent(
                     doc_context += page.extract_text() + "\n"
             else:
                 doc_context = (await document.read()).decode("utf-8", errors="ignore")
-            doc_context = f"\n\n[KONTEKS DOKUMEN YANG DIUPLOAD]:\n{doc_context[:5000]}" # Batasi 5000 char agar tidak error
-            
+            doc_context = f"\n\n[KONTEKS DOKUMEN]:\n{doc_context[:5000]}" 
             history.append({"role": "user", "content": f"Baca dokumen ini: {document.filename}{doc_context}"})
         else:
             history.append({"role": "user", "content": message})
@@ -125,23 +159,26 @@ async def chat_with_agent(
         if image:
             image_bytes = await image.read()
             try:
+                if not gemini_key: raise Exception("Gemini API Key tidak ada.")
                 img = Image.open(io.BytesIO(image_bytes))
                 model = genai.GenerativeModel(model_name='gemini-2.5-flash', system_instruction=system_prompt)
                 response = model.generate_content([message, img])
                 response_text = f"🖼️ **Gemini Vision**\n\n{response.text}"
             except Exception:
                 try:
+                    if not openrouter_client: raise Exception("OpenRouter API Key tidak ada.")
                     base64_image = base64.b64encode(image_bytes).decode('utf-8')
                     fallback = openrouter_client.chat.completions.create(
                         model="qwen/qwen-2.5-vl-7b-instruct:free",
                         messages=[{"role": "user", "content": [{"type": "text", "text": message}, {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}}]}]
                     )
-                    response_text = f"🖼️ **Qwen Vision**\n\n{fallback.choices[0].message.content}"
+                    response_text = f"🖼️ **Qwen Vision (Fallback)**\n\n{fallback.choices[0].message.content}"
                 except Exception as e: response_text = f"Error Gambar: {str(e)}"
 
         # 2. MODE BIKIN GAMBAR
         elif model_choice == "image_gen":
             try:
+                if not groq_client: raise Exception("Groq API Key tidak ada untuk membuat prompt gambar.")
                 enhancer = groq_client.chat.completions.create(
                     messages=[{"role": "system", "content": "You are an expert prompt engineer. Translate to English prompt."}, {"role": "user", "content": message}],
                     model="openai/gpt-oss-120b", temperature=0.7,
@@ -154,6 +191,7 @@ async def chat_with_agent(
         # 3. MODE SCRIPT VIDEO
         elif model_choice == "video_script":
             try:
+                if not groq_client: raise Exception("Groq API Key tidak ada.")
                 completion = groq_client.chat.completions.create(
                     messages=[{"role": "system", "content": "Kamu Sutradara Film AI. Buat storyboard 10-15 detik."}, {"role": "user", "content": message}],
                     model="openai/gpt-oss-120b", temperature=0.7,
@@ -164,7 +202,9 @@ async def chat_with_agent(
         # 4. MODE OMNI AI (MUSYAWARAH MODEL)
         elif model_choice == "omni_ai":
             responses = {}
+            
             def ask_gemini():
+                if not gemini_key: return None
                 try:
                     model = genai.GenerativeModel(model_name='gemini-2.5-flash', system_instruction=system_prompt)
                     gh = [{"role": "user" if msg["role"]=="user" else "model", "parts": [msg["content"]]} for msg in history]
@@ -172,20 +212,47 @@ async def chat_with_agent(
                 except: return None
 
             def ask_groq():
+                if not groq_client: return None
                 try:
                     res = groq_client.chat.completions.create(messages=[{"role": "system", "content": system_prompt}] + history, model="openai/gpt-oss-120b")
                     return res.choices[0].message.content
                 except: return None
 
-            def ask_nvidia(model_name):
+            def ask_deepseek():
+                if not nvidia_client: return None
                 try:
-                    res = nvidia_client.chat.completions.create(messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": message}], model=model_name)
+                    res = nvidia_client.chat.completions.create(messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": message}], model="deepseek-ai/deepseek-r1")
+                    return res.choices[0].message.content
+                except:
+                    if not openrouter_client: return None
+                    try:
+                        fallback = openrouter_client.chat.completions.create(messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": message}], model="meta-llama/llama-3-8b-instruct:free")
+                        return fallback.choices[0].message.content
+                    except: return None
+
+            def ask_qwen():
+                if not nvidia_client: return None
+                try:
+                    res = nvidia_client.chat.completions.create(messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": message}], model="qwen/qwen2.5-coder-32b-instruct")
+                    return res.choices[0].message.content
+                except:
+                    if not openrouter_client: return None
+                    try:
+                        fallback = openrouter_client.chat.completions.create(messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": message}], model="mistralai/mistral-7b-instruct:free")
+                        return fallback.choices[0].message.content
+                    except: return None
+
+            def ask_hf():
+                if not hf_client: return None
+                try:
+                    res = hf_client.chat.completions.create(messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": message}], model="meta-llama/Meta-Llama-3-8B-Instruct")
                     return res.choices[0].message.content
                 except: return None
 
-            def ask_hf():
+            def ask_scaleway():
+                if not scaleway_client: return None
                 try:
-                    res = hf_client.chat.completions.create(messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": message}], model="meta-llama/Meta-Llama-3-8B-Instruct")
+                    res = scaleway_client.chat.completions.create(messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": message}], model="llama-3.3-70b-instruct")
                     return res.choices[0].message.content
                 except: return None
 
@@ -193,9 +260,10 @@ async def chat_with_agent(
                 futures = {
                     'Gemini': executor.submit(ask_gemini),
                     'Groq': executor.submit(ask_groq),
-                    'DeepSeek': executor.submit(ask_nvidia, "deepseek-ai/deepseek-r1"),
-                    'Qwen': executor.submit(ask_nvidia, "qwen/qwen2.5-coder-32b-instruct"),
-                    'HuggingFace': executor.submit(ask_hf)
+                    'DeepSeek': executor.submit(ask_deepseek),
+                    'Qwen': executor.submit(ask_qwen),
+                    'HuggingFace': executor.submit(ask_hf),
+                    'Scaleway': executor.submit(ask_scaleway)
                 }
                 for name, future in futures.items():
                     try: responses[name] = future.result(timeout=40)
@@ -203,13 +271,16 @@ async def chat_with_agent(
 
             valid_answers = {k: v for k, v in responses.items() if v}
             if not valid_answers:
-                response_text = "Waduh, semua AI sedang limit. Coba lagi nanti."
+                response_text = "Waduh, semua AI sedang limit atau API Key belum dimasukkan. Coba cek Environment Variables di Render."
             else:
                 synth_prompt = f"Rangkum jawaban coding terbaik dari AI berikut:\n\n"
                 for name, ans in valid_answers.items(): synth_prompt += f"--- {name} ---\n{ans}\n\n"
                 try:
-                    final_res = groq_client.chat.completions.create(messages=[{"role": "user", "content": synth_prompt}], model="openai/gpt-oss-120b", temperature=0.3)
-                    summary = final_res.choices[0].message.content
+                    if groq_client:
+                        final_res = groq_client.chat.completions.create(messages=[{"role": "user", "content": synth_prompt}], model="openai/gpt-oss-120b", temperature=0.3)
+                        summary = final_res.choices[0].message.content
+                    else:
+                        summary = list(valid_answers.values())[0]
                     response_text = f"🤖 **Omni AI Council**\n*(Hadir: {', '.join(valid_answers.keys())})*\n\n{summary}"
                 except:
                     response_text = f"🤖 **Omni AI**\n\n{list(valid_answers.values())[0]}"

@@ -6,6 +6,7 @@ import base64
 import urllib.parse
 import concurrent.futures
 import time
+import secrets
 from collections import defaultdict, deque
 from PIL import Image
 from pypdf import PdfReader
@@ -15,7 +16,6 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from dotenv import load_dotenv
-import secrets
 
 import google.generativeai as genai
 from groq import Groq
@@ -23,7 +23,9 @@ from openai import OpenAI
 
 load_dotenv()
 
-# --- 1. KONFIGURASI KEAMANAN ---
+# =====================================================================
+# 1. KONFIGURASI KEAMANAN (AUTH & RATE LIMIT)
+# =====================================================================
 security = HTTPBasic()
 
 def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
@@ -37,13 +39,18 @@ def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
         )
     return credentials.username
 
-# --- 2. KONFIGURASI RATE LIMITING (10 request / menit per IP) ---
 RATE_LIMIT = 10
 RATE_WINDOW = 60
 _ip_hits = defaultdict(deque)
 
 def check_rate_limit(request: Request):
-    ip = request.client.host if request.client else "unknown"
+    # Membaca IP asli dari Header Proxy Render (X-Forwarded-For)
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        ip = forwarded_for.split(",")[0].strip()
+    else:
+        ip = request.client.host if request.client else "unknown"
+    
     now = time.time()
     q = _ip_hits[ip]
     while q and now - q[0] > RATE_WINDOW:
@@ -52,7 +59,9 @@ def check_rate_limit(request: Request):
         raise HTTPException(status_code=429, detail="Terlalu banyak permintaan. Harap tunggu 1 menit.")
     q.append(now)
 
-# --- 3. INISIALISASI AI (SAMA SEPERTI SEBELUMNYA) ---
+# =====================================================================
+# 2. INISIALISASI AI (SAMA SEPERTI SEBELUMNYA)
+# =====================================================================
 gemini_key = os.getenv("GEMINI_API_KEY")
 if gemini_key: genai.configure(api_key=gemini_key)
 
@@ -75,12 +84,16 @@ SAVE_DIR = "generated_code"
 HISTORY_FILE = "chat_history.json"
 os.makedirs(SAVE_DIR, exist_ok=True)
 
-# --- 4. ENDPOINT EKSEKUSI KODE (HTTP 403) ---
+# =====================================================================
+# 3. ENDPOINT EKSEKUSI KODE (HTTP 403)
+# =====================================================================
 @app.post("/api/run_raw")
 async def run_raw_code_disabled():
-    raise HTTPException(status_code=403, detail="Fitur eksekusi kode dinonaktifkan.")
+    raise HTTPException(status_code=403, detail="Fitur eksekusi kode dinonaktifkan di server publik demi keamanan.")
 
-# --- 5. FUNGSI MEMORI & FILE ---
+# =====================================================================
+# 4. FUNGSI MEMORI & FILE
+# =====================================================================
 def load_history():
     if os.path.exists(HISTORY_FILE):
         with open(HISTORY_FILE, "r") as f: return json.load(f)
@@ -105,10 +118,12 @@ def process_ai_response(text):
         return clean_text + f"\n\n✅ **(Sistem: File {', '.join(saved_files)} tersimpan!)**"
     return clean_text
 
-# --- 6. ENDPOINT UTAMA (DILINDUNGI AUTH & RATE LIMIT) ---
-@app.get("/", response_class=HTMLResponse)
+# =====================================================================
+# 5. ENDPOINT UTAMA (DILINDUNGI AUTH & RATE LIMIT)
+# =====================================================================
+# PERUBAHAN: Menambahkan dependencies auth di halaman utama
+@app.get("/", response_class=HTMLResponse, dependencies=[Depends(verify_credentials)])
 async def read_root(request: Request):
-    # Halaman utama dilindungi password
     return templates.TemplateResponse(request=request, name="index.html")
 
 @app.get("/api/history", dependencies=[Depends(verify_credentials)])
@@ -153,6 +168,7 @@ async def chat_with_agent(
         if len(history) > 10: history = history[-10:]
         response_text = ""
 
+        # MODE VISION
         if image:
             image_bytes = await image.read()
             try:
@@ -172,6 +188,7 @@ async def chat_with_agent(
                     response_text = f"🖼️ **Qwen Vision**\n\n{fallback.choices[0].message.content}"
                 except Exception as e: response_text = f"Error Gambar: {str(e)}"
 
+        # MODE BIKIN GAMBAR
         elif model_choice == "image_gen":
             try:
                 if not groq_client: raise Exception("Groq API Key tidak ada.")
@@ -184,6 +201,7 @@ async def chat_with_agent(
                 response_text = f"🎨 **Gambar Dibuat!**\n\n![Gambar]({image_url})"
             except Exception as e: response_text = f"Error: {str(e)}"
 
+        # MODE SCRIPT VIDEO
         elif model_choice == "video_script":
             try:
                 if not groq_client: raise Exception("Groq API Key tidak ada.")
@@ -194,6 +212,7 @@ async def chat_with_agent(
                 response_text = f"🎬 **Script Video**\n\n{completion.choices[0].message.content}"
             except Exception as e: response_text = f"Error: {str(e)}"
 
+        # MODE OMNI AI
         elif model_choice == "omni_ai":
             responses = {}
             def ask_gemini():

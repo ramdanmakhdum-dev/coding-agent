@@ -7,7 +7,7 @@ import urllib.parse
 import concurrent.futures
 from PIL import Image
 from pypdf import PdfReader
-from fastapi import FastAPI, Request, UploadFile, File, Form
+from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
@@ -46,6 +46,21 @@ templates = Jinja2Templates(directory="templates")
 SAVE_DIR = "generated_code"
 HISTORY_FILE = "chat_history.json"
 os.makedirs(SAVE_DIR, exist_ok=True)
+
+# =====================================================================
+# 🛡️ SECURITY PATCH: MEMATIKAN CODE RUNNER SEPENUHNYA
+# =====================================================================
+@app.post("/api/run_raw")
+async def run_raw_code_disabled():
+    # Menolak eksekusi kode dari publik dengan HTTP 403 Forbidden
+    raise HTTPException(
+        status_code=403, 
+        detail="Fitur eksekusi kode dinonaktifkan di server publik demi keamanan."
+    )
+
+# =====================================================================
+# FITUR LAINNYA TETAP BERJALAN NORMAL
+# =====================================================================
 
 def load_history():
     if os.path.exists(HISTORY_FILE):
@@ -125,7 +140,7 @@ async def chat_with_agent(
         if len(history) > 10: history = history[-10:]
         response_text = ""
 
-        # MODE VISION (GAMBAR)
+        # MODE VISION
         if image:
             image_bytes = await image.read()
             try:
